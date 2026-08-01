@@ -178,6 +178,18 @@ kubectl --insecure-skip-tls-verify -n ai-platform logs deploy/customer-facing-po
 
 The most common local failure is no active port-forward. Re-run `start-webpage.ps1`.
 
+If Grafana rejects the admin password in a local demo cluster, enable read-only anonymous dashboard access:
+
+```powershell
+.\scripts\enable-grafana-viewer.ps1
+```
+
+Then open:
+
+```text
+http://localhost:3001/d/ai-release-visibility/ai-release-visibility
+```
+
 ### 3. Run A Web Load Test
 
 ```powershell
