@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ai-canary-release-signals
+  namespace: monitoring
+  labels:
+    release: prometheus-stack
+spec:
+  groups:
+    - name: ai-canary-release-signals
+      rules:
+        - alert: AICanaryPodRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="ai-platform"}[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Canary app pod restarted during release window.
+        - alert: AICanaryNotReady
+          expr: kube_deployment_status_replicas_unavailable{namespace="ai-platform"} > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: AI platform deployment has unavailable replicas.
+

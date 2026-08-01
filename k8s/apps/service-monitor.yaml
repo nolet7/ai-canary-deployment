@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-platform-web
+  namespace: ai-platform
+  labels:
+    release: prometheus-stack
+spec:
+  selector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - customer-facing-portal
+          - sre-operations-dashboard
+          - customer-portal
+  endpoints:
+    - port: http
+      path: /
+      interval: 15s
+

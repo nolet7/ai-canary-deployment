@@ -1,0 +1,64 @@
+{
+  "name": "ai-platform-web-canary",
+  "description": "Kayenta-style canary analysis for AI architecture platform web releases",
+  "applications": ["customer-facing-portal"],
+  "judge": {
+    "name": "NetflixACAJudge-v1.0"
+  },
+  "metrics": [
+    {
+      "name": "http_5xx_rate",
+      "query": {
+        "type": "prometheus",
+        "customInlineTemplate": "sum(rate(nginx_ingress_controller_requests{exported_namespace='ai-platform',status=~'5..',ingress=~'customer-facing-portal-.*'}[5m]))"
+      },
+      "analysisConfigurations": {
+        "canary": {
+          "direction": "increase",
+          "nanStrategy": "replace"
+        }
+      },
+      "groups": ["errors"]
+    },
+    {
+      "name": "p95_latency",
+      "query": {
+        "type": "prometheus",
+        "customInlineTemplate": "histogram_quantile(0.95, sum(rate(nginx_ingress_controller_request_duration_seconds_bucket{exported_namespace='ai-platform',ingress=~'customer-facing-portal-.*'}[5m])) by (le, ingress))"
+      },
+      "analysisConfigurations": {
+        "canary": {
+          "direction": "increase",
+          "nanStrategy": "replace"
+        }
+      },
+      "groups": ["latency"]
+    },
+    {
+      "name": "pod_restart_rate",
+      "query": {
+        "type": "prometheus",
+        "customInlineTemplate": "sum(increase(kube_pod_container_status_restarts_total{namespace='ai-platform',pod=~'customer-facing-portal-canary.*'}[5m]))"
+      },
+      "analysisConfigurations": {
+        "canary": {
+          "direction": "increase",
+          "nanStrategy": "replace"
+        }
+      },
+      "groups": ["stability"]
+    }
+  ],
+  "classifier": {
+    "groupWeights": {
+      "errors": 50,
+      "latency": 30,
+      "stability": 20
+    },
+    "scoreThresholds": {
+      "marginal": 75,
+      "pass": 90
+    }
+  }
+}
+
