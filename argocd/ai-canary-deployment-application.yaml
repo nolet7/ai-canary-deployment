@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ai-canary-deployment
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: ai-canary-deployment
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/nolet7/ai-canary-deployment.git
+    targetRevision: main
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-platform
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: customer-facing-portal-canary
+      namespace: ai-platform
+      jsonPointers:
+        - /spec/replicas
+        - /spec/template/spec/containers/0/image
+    - group: networking.k8s.io
+      kind: Ingress
+      name: customer-facing-portal-canary
+      namespace: ai-platform
+      jsonPointers:
+        - /metadata/annotations/nginx.ingress.kubernetes.io~1canary-weight

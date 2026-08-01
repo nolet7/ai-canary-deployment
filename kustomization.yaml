@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - k8s/apps/namespace.yaml
+  - gitops/ai-platform/apps.yaml
+  - k8s/apps/service-monitor.yaml
+  - k8s/observability/anomaly-exporter.yaml
+  - k8s/observability/prometheus-rules.yaml
+  - k8s/observability/grafana-dashboard.yaml
+  - gitops/ai-platform/kayenta.yaml
+

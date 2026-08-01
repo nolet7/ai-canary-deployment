@@ -4,7 +4,9 @@ param(
   [Parameter(Mandatory=$true)][string]$PublicUrl,
   [string]$Weights = "5,25,50",
   [int]$AnalysisSeconds = 30,
-  [string]$Namespace = "ai-platform"
+  [string]$Namespace = "ai-platform",
+  [ValidateSet("automatic", "manual")][string]$RollbackMode = "automatic",
+  [string]$ArgoCdApp = "ai-canary-deployment"
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,5 +17,6 @@ python (Join-Path $root "release_manager\ai_release_manager.py") `
   --public-url $PublicUrl `
   --weights $Weights `
   --analysis-seconds $AnalysisSeconds `
-  --namespace $Namespace
-
+  --namespace $Namespace `
+  --rollback-mode $RollbackMode `
+  --argocd-app $ArgoCdApp

@@ -80,6 +80,31 @@ def rollback(app, namespace, reason):
     ])
 
 
+def annotate_argocd_app(argocd_app, phase, message):
+    if not argocd_app:
+        return
+    kubectl([
+        "-n",
+        "argocd",
+        "annotate",
+        f"application/{argocd_app}",
+        f"ai-release.openai.com/phase={phase}",
+        f"ai-release.openai.com/message={message[:220]}",
+        "argocd.argoproj.io/refresh=hard",
+        "--overwrite",
+    ])
+
+
+def confirm_rollback(mode, reason):
+    if mode == "automatic":
+        return True
+    print("\nManual rollback confirmation required.")
+    print(f"Reason: {reason}")
+    print("Type ROLLBACK and press Enter to confirm rollback.")
+    response = input("> ").strip()
+    return response == "ROLLBACK"
+
+
 def promote(app, namespace, canary_image):
     kubectl(["-n", namespace, "set", "image", f"deployment/{app}-stable", f"app={canary_image}"])
     kubectl(["-n", namespace, "rollout", "status", f"deployment/{app}-stable", "--timeout=180s"])
@@ -178,10 +203,13 @@ def main():
     parser.add_argument("--weights", default="5,25,50")
     parser.add_argument("--analysis-seconds", type=int, default=30)
     parser.add_argument("--prometheus-url", default=os.getenv("PROMETHEUS_URL", ""))
+    parser.add_argument("--rollback-mode", choices=["automatic", "manual"], default=os.getenv("ROLLBACK_MODE", "automatic"))
+    parser.add_argument("--argocd-app", default=os.getenv("ARGOCD_APP", ""))
     args = parser.parse_args()
 
     weights = [int(weight.strip()) for weight in args.weights.split(",") if weight.strip()]
     print(f"Preparing canary {args.app} with image {args.canary_image}")
+    annotate_argocd_app(args.argocd_app, "canary-started", f"{args.app} canary image {args.canary_image}")
     kubectl(["-n", args.namespace, "scale", f"deployment/{args.app}-canary", "--replicas=1"])
     set_canary_image(args.app, args.canary_image, args.namespace)
 
@@ -198,12 +226,20 @@ def main():
         print(json.dumps(report, indent=2))
         if not report["pass"]:
             reason = "; ".join(report["reasons"])
-            print(f"Canary failed at {weight}%. Rolling back: {reason}", file=sys.stderr)
-            rollback(args.app, args.namespace, reason)
-            return 2
+            annotate_argocd_app(args.argocd_app, "rollback-pending", reason)
+            print(f"Canary failed at {weight}%: {reason}", file=sys.stderr)
+            if confirm_rollback(args.rollback_mode, reason):
+                print("Rollback confirmed. Rolling back canary.", file=sys.stderr)
+                rollback(args.app, args.namespace, reason)
+                annotate_argocd_app(args.argocd_app, "rolled-back", reason)
+                return 2
+            print("Rollback was not confirmed. Canary traffic remains at current weight for inspection.", file=sys.stderr)
+            annotate_argocd_app(args.argocd_app, "rollback-deferred", reason)
+            return 3
 
     print("Canary passed all stages. Promoting stable deployment.")
     promote(args.app, args.namespace, args.canary_image)
+    annotate_argocd_app(args.argocd_app, "promoted", f"{args.app} promoted {args.canary_image}")
     print(json.dumps({"result": "promoted", "reports": reports}, indent=2))
     return 0
 

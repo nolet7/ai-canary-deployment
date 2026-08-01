@@ -30,6 +30,10 @@ k8s/
   kayenta/              Kayenta + Redis manifests
   observability/        PrometheusRule for release signals
   streaming/            Optional Kafka, Filebeat, Logstash, Elasticsearch, Kibana
+gitops/
+  ai-platform/          Argo CD/Kustomize source for the AI platform
+argocd/
+  ai-canary-deployment-application.yaml Argo CD Application
 kayenta/
   canary-config.json    Kayenta canary metric config template
 scripts/
@@ -40,6 +44,7 @@ scripts/
   port-forward.ps1      Open local access to a deployed web app
   start-webpage.ps1     Start persistent local access to the webpage
   deploy-observability.ps1 Apply visibility, anomaly, Grafana, and optional Kafka/ELK
+  deploy-argocd-app.ps1 Register the platform in Argo CD
   load-test.ps1         Run local HTTP load test
 release_manager/
   ai_release_manager.py Canary analysis and rollback engine
@@ -130,6 +135,66 @@ $env:KAYENTA_IMAGE = "your-registry/kayenta:tag"
 ```
 
 Kayenta runtime replicas default to `0` to avoid leaving an old community image crash-looping. The Kayenta config and Redis backing service are installed; scale `deployment/kayenta` after setting a maintained `KAYENTA_IMAGE`.
+
+## Argo CD GitOps Integration
+
+The platform can be registered in the cluster's existing Argo CD instance as an `Application`.
+
+Apply the Argo CD Application:
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+.\scripts\import-argocd-images.ps1
+.\scripts\deploy-argocd-app.ps1
+```
+
+Expected:
+
+```text
+application.argoproj.io/ai-canary-deployment created
+```
+
+Check it:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n argocd get application ai-canary-deployment
+```
+
+Open the Argo CD UI:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n argocd port-forward svc/argocd-server 8088:80
+```
+
+Open:
+
+```text
+http://localhost:8088
+```
+
+Look for application:
+
+```text
+ai-canary-deployment
+```
+
+The Argo CD app points to:
+
+```text
+https://github.com/nolet7/ai-canary-deployment.git
+path: .
+targetRevision: main
+```
+
+The app intentionally does not enable Argo CD self-heal. Canary traffic weight and the canary image are live release controls, so Argo CD tracks them but does not immediately fight the canary release manager during a release.
+
+If you want Argo CD to restore the Git baseline after a drill or manual changes, use the Argo UI **Sync** button or:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n argocd patch application ai-canary-deployment --type merge -p '{"operation":{"sync":{"revision":"main"}}}'
+```
+
+Note: if Argo CD deployments are `0/1`, the `Application` object can still be created but will not reconcile until Argo CD itself is healthy.
 
 ## How To Test It
 
@@ -276,6 +341,18 @@ Expected:
 - Canary weight returns to `0`.
 - Canary scales back to `0`.
 
+Argo CD visibility:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n argocd get application ai-canary-deployment -o jsonpath='{.metadata.annotations.ai-release\.openai\.com/phase}'
+```
+
+Expected after promotion:
+
+```text
+promoted
+```
+
 Verify:
 
 ```powershell
@@ -293,7 +370,7 @@ customer-facing-portal-canary   0/0
 
 ### 7. Test Rollback Behavior
 
-Use an unreachable URL to force release failure:
+Use an unreachable URL to force release failure with automatic rollback:
 
 ```powershell
 $env:KUBECTL_INSECURE = "true"
@@ -312,6 +389,40 @@ Expected:
 - Canary ingress weight is reset to `0`.
 - Canary deployment is scaled to `0`.
 - Rollback reason is written as a deployment annotation.
+
+To manually confirm rollback instead, run the canary release with `-RollbackMode manual`:
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+.\scripts\canary-release.ps1 `
+  -App customer-facing-portal `
+  -CanaryImage localhost:5001/customer-facing-portal:canary `
+  -PublicUrl http://localhost:9999 `
+  -Weights "5" `
+  -AnalysisSeconds 1 `
+  -RollbackMode manual
+```
+
+Expected:
+
+```text
+Manual rollback confirmation required.
+Type ROLLBACK and press Enter to confirm rollback.
+```
+
+Type:
+
+```text
+ROLLBACK
+```
+
+Then the release manager resets canary traffic to `0`, scales the canary deployment to `0`, and annotates the Argo CD Application with:
+
+```text
+ai-release.openai.com/phase=rolled-back
+```
+
+If you type anything else, rollback is deferred so you can inspect the failure in Argo CD, Grafana, and Kubernetes before taking action.
 
 Verify:
 
@@ -484,6 +595,17 @@ $env:KAYENTA_URL = "http://localhost:8090"
   -CanaryImage localhost:5001/customer-facing-portal:canary `
   -PublicUrl http://localhost:8080 `
   -Weights "5,25,50"
+```
+
+For manual rollback confirmation on failure:
+
+```powershell
+.\scripts\canary-release.ps1 `
+  -App customer-facing-portal `
+  -CanaryImage localhost:5001/customer-facing-portal:canary `
+  -PublicUrl http://localhost:8080 `
+  -Weights "5,25,50" `
+  -RollbackMode manual
 ```
 
 If analysis fails, rollback is automatic:
