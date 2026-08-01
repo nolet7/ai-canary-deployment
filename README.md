@@ -237,13 +237,13 @@ A score near `0` means normal. A score near `1` means severe release risk. Canar
 Forward Grafana:
 
 ```powershell
-kubectl --insecure-skip-tls-verify -n monitoring port-forward svc/prometheus-stack-grafana 3000:80
+.\scripts\start-grafana-dashboard.ps1
 ```
 
 Open:
 
 ```text
-http://localhost:3000
+http://localhost:3333/d/ai-release-visibility/ai-release-visibility
 ```
 
 Expected:
@@ -433,13 +433,13 @@ This adds:
 Forward Grafana:
 
 ```powershell
-kubectl --insecure-skip-tls-verify -n monitoring port-forward svc/prometheus-stack-grafana 3000:80
+.\scripts\start-grafana-dashboard.ps1
 ```
 
 Open:
 
 ```text
-http://localhost:3000
+http://localhost:3333/d/ai-release-visibility/ai-release-visibility
 ```
 
 Deploy Kafka + ELK for streaming live logs:
