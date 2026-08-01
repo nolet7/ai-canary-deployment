@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-ai-release-visibility
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  ai-release-visibility.json: |
+    {
+      "uid": "ai-release-visibility",
+      "title": "AI Release Visibility",
+      "tags": ["ai-release", "canary", "ml", "kayenta"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "panels": [
+        {
+          "type": "stat",
+          "title": "ML Anomaly Score",
+          "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+          "targets": [{"expr": "ai_release_anomaly_score", "legendFormat": "score"}],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.45},
+                  {"color": "red", "value": 0.75}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Release Signals",
+          "gridPos": {"x": 6, "y": 0, "w": 18, "h": 8},
+          "targets": [{"expr": "ai_release_signal_value", "legendFormat": "{{signal}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Unavailable Replicas",
+          "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+          "targets": [{"expr": "kube_deployment_status_replicas_unavailable{namespace=\"ai-platform\"}", "legendFormat": "{{deployment}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Pod Restarts 5m",
+          "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+          "targets": [{"expr": "increase(kube_pod_container_status_restarts_total{namespace=\"ai-platform\"}[5m])", "legendFormat": "{{pod}}"}]
+        }
+      ]
+    }
+

@@ -130,7 +130,7 @@ foreach ($app in $Apps) {
   }
 }
 
-foreach ($supportImage in @("redis:7-alpine", "sihouzhao/spinnaker:kayenta")) {
+foreach ($supportImage in @("redis:7-alpine", "sihouzhao/spinnaker:kayenta", "python:3.12-alpine")) {
   Invoke-Checked "docker" "pull" $supportImage
   Import-ImageToKindNodes $supportImage
 }

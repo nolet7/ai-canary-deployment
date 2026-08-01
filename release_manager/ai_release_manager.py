@@ -108,6 +108,7 @@ def deterministic_score(app, namespace, public_url, prometheus_url):
         prometheus_url,
         f"kube_deployment_status_replicas_unavailable{{namespace='{namespace}',deployment='{app}-canary'}}",
     )
+    anomaly_score = prometheus_query(prometheus_url, f"ai_release_anomaly_score{{namespace='{namespace}'}}")
 
     score = 100
     reasons = []
@@ -123,13 +124,16 @@ def deterministic_score(app, namespace, public_url, prometheus_url):
     if unavailable and unavailable > 0:
         score -= 30
         reasons.append(f"unavailable canary replicas: {unavailable}")
+    if anomaly_score and anomaly_score >= 0.75:
+        score -= 40
+        reasons.append(f"ML anomaly score {anomaly_score:.2f} exceeded 0.75")
 
     return {
         "score": max(score, 0),
         "pass": score >= 90,
         "reasons": reasons or ["deterministic checks passed"],
         "samples": health_samples,
-        "prometheus": {"restarts": restarts, "unavailable": unavailable},
+        "prometheus": {"restarts": restarts, "unavailable": unavailable, "anomaly_score": anomaly_score},
     }
 
 
@@ -206,4 +210,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

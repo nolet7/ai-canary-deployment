@@ -38,12 +38,24 @@ try {
   Write-Warning "ServiceMonitor CRD is not available or rejected. Continuing."
 }
 
+try {
+  kubectl @kubectlArgs apply -f (Join-Path $root "k8s\observability\anomaly-exporter.yaml")
+} catch {
+  Write-Warning "Anomaly exporter or ServiceMonitor CRD is not available or rejected. Continuing."
+}
+
 Apply-Template (Join-Path $root "k8s\kayenta\kayenta.yaml")
 
 try {
   kubectl @kubectlArgs apply -f (Join-Path $root "k8s\observability\prometheus-rules.yaml")
 } catch {
   Write-Warning "PrometheusRule CRD is not available or rejected. Continuing."
+}
+
+try {
+  kubectl @kubectlArgs apply -f (Join-Path $root "k8s\observability\grafana-dashboard.yaml")
+} catch {
+  Write-Warning "Grafana dashboard ConfigMap could not be applied. Continuing."
 }
 
 kubectl @kubectlArgs -n ai-platform get deploy,svc,ingress

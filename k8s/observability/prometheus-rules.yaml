@@ -9,6 +9,12 @@ spec:
   groups:
     - name: ai-canary-release-signals
       rules:
+        - record: ai_release:unavailable_replicas
+          expr: sum(kube_deployment_status_replicas_unavailable{namespace="ai-platform"})
+        - record: ai_release:pod_restarts_5m
+          expr: sum(increase(kube_pod_container_status_restarts_total{namespace="ai-platform"}[5m]))
+        - record: ai_release:anomaly_score_zscore
+          expr: clamp_max(abs((ai_release_anomaly_score - avg_over_time(ai_release_anomaly_score[30m])) / clamp_min(stddev_over_time(ai_release_anomaly_score[30m]), 0.01)), 10)
         - alert: AICanaryPodRestarting
           expr: increase(kube_pod_container_status_restarts_total{namespace="ai-platform"}[5m]) > 0
           for: 1m
@@ -23,4 +29,11 @@ spec:
             severity: critical
           annotations:
             summary: AI platform deployment has unavailable replicas.
-
+        - alert: AIReleaseAnomalyScoreHigh
+          expr: ai_release_anomaly_score > 0.75
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: AI release anomaly score is high.
+            description: The ML-style anomaly score exceeded 0.75 and should block or roll back canary promotion.

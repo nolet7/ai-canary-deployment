@@ -14,6 +14,9 @@ It is designed for Lateef's local cluster:
 - Stable and canary Kubernetes deployments for user-facing applications.
 - NGINX Ingress canary routing with adjustable traffic weight.
 - Kayenta service manifests with Redis backing store.
+- Prometheus ML-style anomaly score exported as `ai_release_anomaly_score`.
+- Grafana dashboard for release health, anomaly score, restarts, and unavailable replicas.
+- Optional Kafka + ELK pipeline for streaming live Kubernetes logs into Elasticsearch/Kibana.
 - AI release manager that evaluates health, Prometheus metrics, and optional Kayenta output.
 - Automatic rollback that sets canary traffic to `0` and scales canary replicas down.
 - Load test script for the exposed web application.
@@ -26,6 +29,7 @@ k8s/
   apps/                 Kubernetes app deployments, services, ingress, ServiceMonitor
   kayenta/              Kayenta + Redis manifests
   observability/        PrometheusRule for release signals
+  streaming/            Optional Kafka, Filebeat, Logstash, Elasticsearch, Kibana
 kayenta/
   canary-config.json    Kayenta canary metric config template
 scripts/
@@ -34,6 +38,8 @@ scripts/
   canary-release.ps1    Run AI-assisted canary release and rollback/promotion gate
   rollback.ps1          Manual rollback helper
   port-forward.ps1      Open local access to a deployed web app
+  start-webpage.ps1     Start persistent local access to the webpage
+  deploy-observability.ps1 Apply visibility, anomaly, Grafana, and optional Kafka/ELK
   load-test.ps1         Run local HTTP load test
 release_manager/
   ai_release_manager.py Canary analysis and rollback engine
@@ -44,6 +50,7 @@ release_manager/
 - Docker Desktop running.
 - `kubectl` configured for `kind-srespace-platform`.
 - PowerShell.
+- Existing kube-prometheus-stack is supported and was detected in namespace `monitoring`.
 - Optional but recommended: a local registry reachable by the Kubernetes nodes, such as `localhost:5001`.
 - Optional: `kind` CLI. If installed, the build script can load images directly into the cluster.
 - Optional: OpenAI-compatible API credentials for AI judgment.
@@ -113,7 +120,8 @@ This deploys:
 - Services
 - NGINX canary ingress
 - Kayenta + Redis in namespace `kayenta`
-- Prometheus rules
+- Prometheus anomaly exporter and rules
+- Grafana dashboard ConfigMap
 
 The default lab Kayenta image is `sihouzhao/spinnaker:kayenta` because several historic Spinnaker Kayenta `latest` image locations no longer publish pullable manifests. Override it when you have a preferred maintained image:
 
@@ -125,10 +133,11 @@ Kayenta runtime replicas default to `0` to avoid leaving an old community image 
 
 ## View The Webpage
 
-Port-forward the customer-facing portal:
+Start persistent local access to the customer-facing portal:
 
 ```powershell
-.\scripts\port-forward.ps1 -App customer-facing-portal -LocalPort 8080
+$env:KUBECTL_INSECURE = "true"
+.\scripts\start-webpage.ps1 -App customer-facing-portal -LocalPort 8080
 ```
 
 Open:
@@ -143,6 +152,69 @@ You can also port-forward:
 .\scripts\port-forward.ps1 -App sre-operations-dashboard -LocalPort 8081
 .\scripts\port-forward.ps1 -App customer-portal -LocalPort 8082
 ```
+
+Stop the background webpage port-forward:
+
+```powershell
+.\scripts\stop-webpage.ps1 -LocalPort 8080
+```
+
+## Visibility Stack
+
+Deploy the lightweight visibility layer:
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+.\scripts\deploy-observability.ps1
+```
+
+This adds:
+
+- `ai-anomaly-exporter` in namespace `ai-platform`
+- Prometheus metric `ai_release_anomaly_score`
+- Prometheus recording and alert rules
+- Grafana dashboard `AI Release Visibility`
+
+Forward Grafana:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n monitoring port-forward svc/prometheus-stack-grafana 3000:80
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Deploy Kafka + ELK for streaming live logs:
+
+```powershell
+.\scripts\import-observability-images.ps1
+.\scripts\deploy-observability.ps1 -IncludeStreamingStack
+```
+
+This adds namespace `ai-observability` with:
+
+- Kafka for streaming live logs
+- Filebeat DaemonSet reading Kubernetes container logs
+- Logstash pipeline from Kafka to Elasticsearch
+- Elasticsearch with `xpack.ml.enabled=true`
+- Kibana with ML enabled
+
+Forward Kibana:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-observability port-forward svc/kibana 5601:5601
+```
+
+Open:
+
+```text
+http://localhost:5601
+```
+
+Note: Elasticsearch built-in ML requires an Elastic license level that supports ML. The manifest enables ML features; the available feature set depends on your Elastic license.
 
 ## Run A Canary Release
 
@@ -164,6 +236,8 @@ If analysis fails, rollback is automatic:
 - ingress canary weight is set to `0`
 - canary deployment is scaled to `0`
 - release status is annotated on the deployment
+
+Rollback also triggers when `ai_release_anomaly_score >= 0.75`.
 
 ## Optional AI Judgment
 
