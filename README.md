@@ -131,6 +131,249 @@ $env:KAYENTA_IMAGE = "your-registry/kayenta:tag"
 
 Kayenta runtime replicas default to `0` to avoid leaving an old community image crash-looping. The Kayenta config and Redis backing service are installed; scale `deployment/kayenta` after setting a maintained `KAYENTA_IMAGE`.
 
+## How To Test It
+
+Run these checks after `.\scripts\build-and-load.ps1` and `.\scripts\deploy.ps1`.
+
+### 1. Check Kubernetes Workloads
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+kubectl --insecure-skip-tls-verify -n ai-platform get deploy,pods,svc,ingress
+```
+
+Expected:
+
+- `customer-facing-portal-stable` is `2/2`.
+- `customer-facing-portal-canary` is `0/0` when no release is running.
+- `customer-portal` is `1/1`.
+- `sre-operations-dashboard` is `1/1`.
+- `ai-anomaly-exporter` is `1/1`.
+- Ingresses exist for `customer-facing-portal-stable` and `customer-facing-portal-canary`.
+
+### 2. Open The Webpage
+
+```powershell
+.\scripts\start-webpage.ps1 -App customer-facing-portal -LocalPort 8080
+```
+
+Expected:
+
+```text
+Webpage is ready: http://localhost:8080 (200, ... bytes)
+```
+
+Open:
+
+```text
+http://localhost:8080
+```
+
+If the webpage fails, check:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-platform get pods
+kubectl --insecure-skip-tls-verify -n ai-platform logs deploy/customer-facing-portal-stable --tail=50
+```
+
+The most common local failure is no active port-forward. Re-run `start-webpage.ps1`.
+
+### 3. Run A Web Load Test
+
+```powershell
+.\scripts\load-test.ps1 -Url http://localhost:8080 -Requests 500 -Concurrency 25
+```
+
+Expected healthy result:
+
+```json
+{
+  "requests": 500,
+  "ok": 500,
+  "failed": 0
+}
+```
+
+Latency numbers will vary by machine. For this local cluster, p95 under a few hundred milliseconds is normal for the static web app.
+
+### 4. Check Prometheus Anomaly Score
+
+Forward the anomaly exporter:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-platform port-forward svc/ai-anomaly-exporter 9108:9108
+```
+
+In another terminal:
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing http://localhost:9108/metrics).Content
+```
+
+Expected:
+
+```text
+ai_release_anomaly_score{namespace="ai-platform"} 0.0000
+ai_release_signal_value{signal="unavailable_replicas"} 0.0
+ai_release_signal_value{signal="pod_restarts_5m"} 0.0
+```
+
+A score near `0` means normal. A score near `1` means severe release risk. Canary rollback triggers at `>= 0.75`.
+
+### 5. Check Grafana Dashboard
+
+Forward Grafana:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n monitoring port-forward svc/prometheus-stack-grafana 3000:80
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+Expected:
+
+- Dashboard named `AI Release Visibility`.
+- Anomaly score panel near `0`.
+- Release signal panels showing restarts, unavailable replicas, and ingress signals.
+
+### 6. Test A Passing Canary Release
+
+Keep the webpage port-forward running, then run:
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+.\scripts\canary-release.ps1 `
+  -App customer-facing-portal `
+  -CanaryImage localhost:5001/customer-facing-portal:canary `
+  -PublicUrl http://localhost:8080 `
+  -Weights "5" `
+  -AnalysisSeconds 5
+```
+
+Expected:
+
+- Canary scales from `0` to `1`.
+- Ingress canary weight changes to `5`.
+- Health probes return HTTP `200`.
+- Release score is `100`.
+- Stable deployment is promoted.
+- Canary weight returns to `0`.
+- Canary scales back to `0`.
+
+Verify:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-platform get deploy customer-facing-portal-stable customer-facing-portal-canary
+kubectl --insecure-skip-tls-verify -n ai-platform get ingress customer-facing-portal-canary -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/canary-weight}'
+```
+
+Expected:
+
+```text
+customer-facing-portal-stable   2/2
+customer-facing-portal-canary   0/0
+0
+```
+
+### 7. Test Rollback Behavior
+
+Use an unreachable URL to force release failure:
+
+```powershell
+$env:KUBECTL_INSECURE = "true"
+.\scripts\canary-release.ps1 `
+  -App customer-facing-portal `
+  -CanaryImage localhost:5001/customer-facing-portal:canary `
+  -PublicUrl http://localhost:9999 `
+  -Weights "5" `
+  -AnalysisSeconds 1
+```
+
+Expected:
+
+- Script exits with a failure.
+- Output says canary failed and rollback is running.
+- Canary ingress weight is reset to `0`.
+- Canary deployment is scaled to `0`.
+- Rollback reason is written as a deployment annotation.
+
+Verify:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-platform get deploy customer-facing-portal-canary
+kubectl --insecure-skip-tls-verify -n ai-platform describe deploy customer-facing-portal-canary
+```
+
+Expected:
+
+- `customer-facing-portal-canary` is `0/0`.
+- Annotation `ai-release.openai.com/last-rollback-reason` exists.
+
+### 8. Test Manual Rollback
+
+```powershell
+.\scripts\rollback.ps1 -App customer-facing-portal
+```
+
+Expected:
+
+- Canary ingress weight is `0`.
+- Canary replicas are `0`.
+- Manual rollback annotation is added.
+
+### 9. Optional Kafka + ELK Test
+
+Only run this if the local cluster has enough CPU and memory:
+
+```powershell
+.\scripts\import-observability-images.ps1
+.\scripts\deploy-observability.ps1 -IncludeStreamingStack
+```
+
+Check pods:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-observability get pods,svc
+```
+
+Expected:
+
+- `kafka` is running.
+- `elasticsearch` is running.
+- `logstash` is running.
+- `kibana` is running.
+- `filebeat` DaemonSet has pods on cluster nodes.
+
+Forward Kibana:
+
+```powershell
+kubectl --insecure-skip-tls-verify -n ai-observability port-forward svc/kibana 5601:5601
+```
+
+Open:
+
+```text
+http://localhost:5601
+```
+
+Expected:
+
+- Kibana loads.
+- Elasticsearch receives indexes named `ai-platform-logs-*` after app logs are emitted.
+- Built-in Elastic ML features are visible only when your Elastic license supports ML.
+
+### 10. Cleanup Local Port-Forwards
+
+```powershell
+.\scripts\stop-webpage.ps1 -LocalPort 8080
+```
+
+For manually started foreground port-forwards, press `Ctrl+C` in that terminal.
+
 ## View The Webpage
 
 Start persistent local access to the customer-facing portal:
